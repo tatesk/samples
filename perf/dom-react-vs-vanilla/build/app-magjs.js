@@ -1,5 +1,5 @@
 /**
- * Copyright 2015 Tomotaka SUWA. All rights reserved.
+ * Copyright 2015-2016 Tomotaka SUWA. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,63 +23,104 @@ var searchTerms = [
   'architecture'
 ];
 
+var timekeeper = {
+  updated: false,
+  times: [],
+  node: null,
+  button: {},
+
+  activate: function (button) {
+    this.button = button || {};
+    this.updated = false;
+    this.times = [];
+
+    this.button.disabled = true;
+  },
+
+  deactivate: function () {
+    this.updated = true;
+
+    if (this.button) {
+      this.button.disabled = false;
+    }
+  },
+
+  tick: function () {
+    this.times.push(window.performance.now());
+  },
+
+  getLapTime: function (i, j) {
+    var from = Math.min(i, j);
+    var to = Math.max(i, j);
+
+    if (this.times.length < to) {
+      throw new Error('Not found a pair of time to measure a lap time');
+    }
+
+    return this.times[to] - this.times[from];
+  },
+
+  getJsTime: function () {
+    return this.getLapTime(0, 1) + this.getLapTime(2, 3);
+  },
+
+  getTotalTime: function () {
+    return this.getLapTime(0, 4);
+  }
+};
+
 var app = {
   controller: function (props) {
-    this.appendImages = function (callback) {
-      var onFlickr = function (callback, images) {
+    this.isupdate = function (e) {
+      if (timekeeper.updated) {
+        e.preventDefault();
+      }
+    };
+
+    this.willupdate = function () {
+      timekeeper.tick();
+    };
+
+    this.didupdate = function () {
+      timekeeper.tick();
+
+      console.timeEnd('MagJS Execution');
+
+      if (props.images.length > 0) {
+        var onNextFrameDone = function () {
+          timekeeper.tick();
+
+          results.push({
+            size: props.images.length,
+            jsTime: timekeeper.getJsTime(),
+            totalTime: timekeeper.getTotalTime()
+          });
+
+          timekeeper.deactivate();
+        };
+
+        requestAnimationFrame(onNextFrameDone.bind(this));
+      }
+    };
+
+    this.appendImages = function (node) {
+      timekeeper.activate(node);
+
+      var onFlickr = function (images) {
         var newData = props.images.concat(images);
 
-        var startDrawTime = window.performance.now();
-        var jSStartExecutionTime = window.performance.now();
+        timekeeper.tick();
 
         console.time('MagJS Execution');
 
         // Go!
         props.images = newData;
 
-        console.timeEnd('MagJS Execution');
-
-        var jsExecutionTime = window.performance.now() - jSStartExecutionTime;
-
-        console.time('Async');
-
-        this.willupdate = function () {
-          console.timeEnd('Async');
-          console.time('Update');
-
-          var startUpdateTime = window.performance.now();
-
-          this.didupdate = function () {
-            console.timeEnd('Update');
-            console.time('Draw');
-
-            var endUpdateTime = window.performance.now();
-
-            var onNextFrameDone = function () {
-              console.timeEnd('Draw');
-
-              var updateTime = endUpdateTime - startUpdateTime;
-              var jsTime = jsExecutionTime + updateTime;
-
-              results.push({
-                size: props.images.length,
-                jsTime: jsTime,
-                totalTime: window.performance.now() - startDrawTime
-              });
-
-              callback();
-            };
-
-            requestAnimationFrame(onNextFrameDone.bind(this));
-          };
-        };
+        timekeeper.tick();
       };
 
-      this.willupdate = null;
-      this.didupdate = null;
-
       flickr.search(searchTerms[searchIndex], 100)
-        .then(onFlickr.bind(this, callback));
+        .then(onFlickr.bind(this));
       
       searchIndex ++;
       searchIndex %= searchTerms.length;
@@ -89,14 +130,8 @@ var app = {
   view: function (state, props) {
     state['header'] = {
       'refresh': {
-        _onclick: function () {
-          var refreshButton = this;
-
-          refreshButton.disabled = true;
-
-          state.appendImages(function () {
-            refreshButton.disabled = false;
-          });
+        _onclick: function (e) {
+          state.appendImages(this);
         }
       },
 
